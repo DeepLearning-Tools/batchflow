@@ -294,7 +294,7 @@ class TorchModel:
         self.devices = []
         self.train_steps = None
 
-        self.sync_counter = 0
+        self.sync_counter = 1
         self.microbatch = None
 
         self.iter_info = {}
@@ -1013,10 +1013,8 @@ class TorchModel:
             self.train_lock.release()
 
         outputs = [outputs] if isinstance(fetches, str) else outputs
-        output = []
-        for i, _ in enumerate(outputs[0]):
-            lst = [np.asarray(item[i]) for item in outputs]
-            output.append(np.concatenate(lst, axis=0) if lst[0].size != 1 else np.mean(lst))
+        output = [np.concatenate(lst, axis=0) if lst[0].size != 1 else np.mean(lst)
+                  for lst in outputs]
         output = output[0] if isinstance(fetches, str) else output
 
         if profile:
@@ -1061,20 +1059,23 @@ class TorchModel:
                 loss = sum([loss_fn_(predictions, targets) for loss_fn_ in loss_fn]) / len(loss_fn)
                 mode_loss += loss
                 loss.backward()
-                step['iter'] = step.get('iter', 0) + 1
+                step['iter'] = step.get('iter', 0.0) + (1 / sync_frequency)
 
                 if self.sync_counter >= sync_frequency:
-                    self.sync_counter = 1
+                    for p in self.model.parameters():
+                        p.grad /= sync_frequency
+
                     optimizer.step()
                     optimizer.zero_grad()
+                    self.sync_counter = 1
                 else:
                     self.sync_counter += 1
 
                 if decay:
                     if step.get('current_iter', 0) >= step['n_iters']:
                         decay.step()
-                        step['current_iter'] = 0
-                    step['current_iter'] = step.get('current_iter', 0) + 1
+                        step['current_iter'] = 0.0
+                    step['current_iter'] = step.get('current_iter', 0.0) + (1 / sync_frequency)
 
                 output_container['loss' + '_'*int(len(name) > 0) + name] = loss
             output_container['loss' + '_'*int(len(mode) > 0) + mode] = mode_loss

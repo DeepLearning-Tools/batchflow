@@ -140,6 +140,26 @@ class Combine(nn.Module):
         weighted = Combine.mul([conv1, conv2])
         return Combine.sum([weighted, skip])
 
+
+    @staticmethod
+    def gau(inputs, filters=None, factor=None, **kwargs):
+        """ Global Attention Upsample module. """
+        return GAU(inputs=inputs, filters=filters, factor=factor, **kwargs)
+        # from .conv_block import ConvBlock # can't be imported in the file beginning due to recursive imports
+        # x, skip = inputs[0], inputs[1]
+        # num_dims = get_num_dims(skip)
+        # conv1 = ConvBlock(inputs=x, layout='ca', filters=filters, **kwargs)(x)
+        # conv2 = ConvBlock(inputs=skip, layout='Vfna >', units=filters, dim=num_dims, **kwargs)(skip)
+
+        # gated = Combine.mul([conv1, conv2])
+
+        # gated = ConvBlock(inputs=gated, layout='caN', filters=filters, scale_factor=factor)(gated)
+        # clamped = ConvBlock(inputs=skip, layout='ca', filters=filters, **kwargs)(skip)
+        # gated = Crop(resize_to=clamped)(gated)
+        # return Combine.sum([gated, clamped])
+
+
+
     OPS = {
         concat: ['concat', 'cat', '.'],
         sum: ['sum', 'plus', '+'],
@@ -147,6 +167,7 @@ class Combine(nn.Module):
         mean: ['average', 'avg', 'mean'],
         softsum: ['softsum', '&'],
         attention: ['attention'],
+        gau: ['gau'],
     }
     OPS = {alias: getattr(method, '__func__') for method, aliases in OPS.items() for alias in aliases}
 
@@ -164,6 +185,9 @@ class Combine(nn.Module):
             op = self.OPS[op]
             if op.__name__ in ['softsum', 'attention']:
                 self.op = lambda inputs: op(inputs, **kwargs)
+                self.force_resize = force_resize if force_resize is not None else False
+            if op.__name__ in ['gau']:
+                self.op = op(inputs, **kwargs)
                 self.force_resize = force_resize if force_resize is not None else False
             else:
                 self.op = op
@@ -217,6 +241,44 @@ class Combine(nn.Module):
             resized.append(item)
         return resized
 
+class GAU(nn.Module):
+
+    def __init__(self, inputs=None, filters=None, factor=None, **kwargs):
+        from .conv_block import ConvBlock # can't be imported in the file beginning due to recursive imports
+        super().__init__()
+        skip, x = inputs[0], inputs[1]
+        # print(get_shape(x), get_shape(skip))
+        num_dims = get_num_dims(skip)
+
+        self.conv1 = ConvBlock(inputs=x, layout='ca', filters=filters, **kwargs)
+        self.conv2 = ConvBlock(inputs=skip, layout='Vfna >', units=filters, dim=num_dims, **kwargs)
+        t1 = self.conv1(x)
+        t2 = self.conv2(skip)
+        gated = Combine.mul([t1, t2])
+
+        self.gate = ConvBlock(inputs=gated, layout='caN', filters=filters, scale_factor=factor)
+        self.clamp = ConvBlock(inputs=skip, layout='ca', filters=filters, **kwargs)
+        # gated = self.gate(gated)
+        # clamped = self.clamp(skip)
+        # gated = Crop(resize_to=clamped)(gated)
+
+        # print(get_shape(gated))
+
+    def forward(self, inputs):
+        skip, x = inputs[0], inputs[1]
+
+        t1, t2 = self.conv1(x), self.conv2(skip)
+        gated = Combine.mul([t1, t2])
+
+        gated = self.gate(gated)
+        clamped = self.clamp(skip)
+        gated = Crop(resize_to=clamped)(gated)
+        summed = Combine.sum([gated, clamped])
+        return Combine.concat([summed, skip])
+
+
+
+
 
 
 class Interpolate(nn.Module):
@@ -244,11 +306,12 @@ class Interpolate(nn.Module):
         if mode in self.MODES:
             mode = self.MODES[mode]
         self.mode = mode
+        self.align_corners = True if self.mode in ['linear', 'bilinear', 'bicubic', 'trilinear'] else None
         self.kwargs = kwargs
 
     def forward(self, x):
         return F.interpolate(x, mode=self.mode, size=self.shape, scale_factor=self.scale_factor,
-                             align_corners=True, **self.kwargs)
+                             align_corners=self.align_corners, **self.kwargs)
 
     def extra_repr(self):
         if self.scale_factor is not None:

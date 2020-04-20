@@ -433,14 +433,21 @@ class ConvBlock(nn.Sequential):
 
     repeated = splitted * 2
     """
-    def __init__(self, *args, inputs=None, base_block=BaseConvBlock, n_repeats=1, **kwargs):
+    def __init__(self, *args, inputs=None, base_block=BaseConvBlock, n_repeats=1, n_reccurent=1, **kwargs):
         base_block = kwargs.pop('base', None) or base_block
         self.input_shape, self.device = get_shape(inputs), inputs.device
-        self.base_block, self.n_repeats = base_block, n_repeats
+        self.base_block, self.n_repeats, self.n_reccurent = base_block, n_repeats, n_reccurent
         self.args, self.kwargs = args, kwargs
 
         self._make_modules(inputs)
         super().__init__(*self.layers)
+
+    def forward(self, x):
+        output = super().forward(x)
+        for i in range(self.n_reccurent - 1):
+            x = super().forward(x + output)
+        return output
+
 
 
     def _make_modules(self, inputs):
