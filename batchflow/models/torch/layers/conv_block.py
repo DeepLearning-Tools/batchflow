@@ -444,7 +444,7 @@ class ConvBlock(nn.Sequential):
 
     def forward(self, x):
         output = super().forward(x)
-        for i in range(self.n_reccurent - 1):
+        for _ in range(self.n_reccurent - 1):
             x = super().forward(x + output)
         return output
 

@@ -17,6 +17,7 @@ import torch.nn as nn
 from .utils import unpack_fn_from_config, get_shape
 from .layers import ConvBlock
 from .losses import CrossEntropyLoss
+from ..base import BaseModel
 from ... import Config
 
 
@@ -53,7 +54,7 @@ DECAYS_DEFAULTS = {
 
 
 
-class TorchModel:
+class TorchModel(BaseModel):
     r""" Base class for eager Torch models.
 
     Parameters
@@ -1012,10 +1013,13 @@ class TorchModel:
         if use_lock:
             self.train_lock.release()
 
-        outputs = [outputs] if isinstance(fetches, str) else outputs
-        output = [np.concatenate(lst, axis=0) if lst[0].size != 1 else np.mean(lst)
-                  for lst in outputs]
-        output = output[0] if isinstance(fetches, str) else output
+        if fetches:
+            outputs = [outputs] if isinstance(fetches, str) else outputs
+            output = [np.concatenate(lst, axis=0) if lst[0].size != 1 else np.mean(lst)
+                      for lst in outputs]
+            output = output[0] if isinstance(fetches, str) else output
+        else:
+            output = []
 
         if profile:
             profiler.__exit__(None, None, None)
